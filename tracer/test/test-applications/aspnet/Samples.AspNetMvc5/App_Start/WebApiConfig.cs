@@ -1,6 +1,10 @@
 using Samples.AspNetMvc5.Handlers;
 using System;
 using System.Configuration;
+using System.Net;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Web.Http;
 using System.Web.Http.ExceptionHandling;
 
@@ -20,8 +24,10 @@ namespace Samples.AspNetMvc5
 
             config.MapHttpAttributeRoutes();
 
+            config.MessageHandlers.Add(new HttpCodeSettingHandler());
+
             // Replace default exception handler
-            config.Services.Replace(typeof(IExceptionHandler), new CustomTracingExceptionHandler());
+            // config.Services.Replace(typeof(IExceptionHandler), new CustomTracingExceptionHandler());
 
             // Add global message handler
             config.MessageHandlers.Add(new PassThroughQuerySuccessMessageHandler());
@@ -47,6 +53,16 @@ namespace Samples.AspNetMvc5
                 constraints: null,
                 handler: new TerminatingQuerySuccessMessageHandler()  // per-route message handler
             );
+        }
+    }
+
+    public class HttpCodeSettingHandler : DelegatingHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = await base.SendAsync(request, cancellationToken);
+            response.StatusCode = HttpStatusCode.NotFound;
+            return response;
         }
     }
 }

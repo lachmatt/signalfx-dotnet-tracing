@@ -28,6 +28,12 @@ namespace Samples.AspNetMvc5.Controllers
             Thread.Sleep(TimeSpan.FromSeconds(value ?? 0));
             return Json(value);
         }
+
+        [HttpGet]
+        public IHttpActionResult Throw()
+        {
+            throw new Exception("failed");
+        }
         
         [HttpGet]
         public IHttpActionResult StatusCode(int value)
