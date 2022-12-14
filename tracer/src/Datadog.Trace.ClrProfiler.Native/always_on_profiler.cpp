@@ -48,6 +48,8 @@ static std::unordered_map<ThreadID, always_on_profiler::thread_span_context> thr
 
 static std::mutex name_cache_lock = std::mutex();
 
+static std::atomic<bool> sampling_cpu = false;
+
 static ICorProfilerInfo10* profiler_info; // After feature sets settle down, perhaps this should be refactored and have a single static instance of ThreadSampler
 
 // Dirt-simple back pressure system to save overhead if managed code is not reading fast enough
@@ -627,6 +629,11 @@ int GetMaxAllocationsPerMinute()
 
 void PauseClrAndCaptureSamples(AlwaysOnProfiler* prof, ICorProfilerInfo10* info10)
 {
+    // spin lock until it's safe to proceed (see AllocationTick)
+    while (sampling_cpu.exchange(true))
+    {
+    }
+
     // These locks are in use by managed threads; Acquire locks before suspending the runtime to prevent deadlock
     // Any of these can be in use by random app/clr threads, but this is the only
     // place that acquires more than one lock at a time.
@@ -667,6 +674,7 @@ void PauseClrAndCaptureSamples(AlwaysOnProfiler* prof, ICorProfilerInfo10* info1
                   " frames=", prof->stats_.total_frames, " misses=", prof->stats_.name_cache_misses);
 
     prof->PublishBuffer();
+    sampling_cpu.store(false);
 }
 
 void SleepMillis(int millis) {
@@ -816,8 +824,15 @@ bool AllocationSubSampler::ShouldSample()
 
 void AlwaysOnProfiler::AllocationTick(ULONG dataLen, LPCBYTE data)
 {
+    if(sampling_cpu.exchange(true))
+    {
+        // can't continue if suspension already started
+        trace::Logger::Debug("Not safe to continue, exiting.");
+        return;
+    }
     if (this->allocationSubSampler == nullptr || !this->allocationSubSampler->ShouldSample())
     {
+        sampling_cpu.store(false);
         return;
     }
 
@@ -835,6 +850,7 @@ void AlwaysOnProfiler::AllocationTick(ULONG dataLen, LPCBYTE data)
     if (FAILED(hr))
     {
         trace::Logger::Debug("GetCurrentThreadId failed, ", hr);
+        sampling_cpu.store(false);
         return;
     }
     auto unknownThreadState = ThreadState();
@@ -856,6 +872,8 @@ void AlwaysOnProfiler::AllocationTick(ULONG dataLen, LPCBYTE data)
     CaptureAllocationStack(this, &localBuf);
     localBuf.EndSample();
     AllocationSamplingAppendToBuffer(static_cast<int32_t>(localBytes.size()), localBytes.data());
+
+    sampling_cpu.store(false);
 }
 
 void AlwaysOnProfiler::StartAllocationSampling(ICorProfilerInfo12* info12)
